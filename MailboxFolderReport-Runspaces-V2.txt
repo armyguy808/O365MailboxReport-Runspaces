@@ -1,0 +1,111 @@
+﻿# Point of Contact
+# Michael Fuller
+#www.linkedin.com/in/michael-fuller-5a3a5898
+
+# Export File name
+$fileName="MailboxSizeReport-runspacesV2-$(get-date -f 'MM-dd-yyyy HHmm').csv"
+
+# Change the export path to your desired location
+$exportPath = "C:\Users\$env:USERNAME\Documents\$($fileName)"
+
+# Change the result size from "unlimited" to any number to do a test run
+$resultSize="Unlimited"
+
+#Change the max runspaces to test performance.Rule of thumb is to match your max logical processors.
+#$maxConcurrentRunspaces = 8
+
+# Define the maximum number of concurrent runspaces based on the current processor's logical core count
+$maxConcurrentRunspaces = (get-ciminstance -classname win32_processor | Measure-Object -Property NumberOfLogicalProcessors -sum).sum
+
+# Get start time
+$start = Get-Date
+# Load necessary assemblies for runspaces
+Add-Type -AssemblyName System.Threading
+
+# Create runspace pool
+$runspacePool = [runspacefactory]::CreateRunspacePool(1, $maxConcurrentRunspaces)
+$runspacePool.Open()
+
+# script block for processing mailboxes
+$scriptBlock = {
+    param ($smtp, $guid, $archiveState, $exportPath)
+    # Process the current chunk and store the result
+    $result=($guid | Get-exoMailboxStatistics -properties LegacyDN)
+    $results2=if ($archivestate -notlike "None") {($guid | Get-exoMailboxStatistics -archive -properties LegacyDN)}
+    #write-host "Building report..."
+        $archive=($results2 | ? {$_.LegacyDN -like "*$($result.LegacyDN)*"})
+        # object to store the result for this email
+        $obj = [PSCustomObject]@{
+                "Email"                     = $smtp
+                "MailboxSize (GB)"          = [math]::round( ([decimal](($result.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)
+                "ArchiveSize (GB)"          = if ($archive.totalitemsize.value -ne $null) {[math]::round( ([decimal](($archive.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)} Else {"N/A"}
+                "RecoverableItemsSize (GB)" = [math]::round( ([decimal](($result.TotalDeletedItemSize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)
+            }   
+#Export error handling. Faster and more reliable than try catch statement
+$error.clear()
+$obj | Export-Csv -Path $exportPath -NoTypeInformation -Append
+if ($error) {
+   (1..50) | ForEach-Object {
+                            if ($error) {
+                               $error.clear()
+                               #sleep -Milliseconds 1
+                               $obj | Export-Csv -Path $exportPath -NoTypeInformation -Append
+                            } else {break} 
+                            }
+          }          
+}
+
+
+# Retrieve mailboxes
+write-host "Getting users list..."
+$mailboxes = get-exomailbox -resultsize $resultSize -Properties ArchiveState | ? {$_.PrimarySmtpAddress -notlike "disable*"} | Select-Object primarysmtpaddress, guid, archivestate
+Write-host "Mailbox total: $(($mailboxes).count)"
+Write-host "Building report..."
+# Initialize runspace management using ArrayList
+$runspaceJobs = New-Object System.Collections.ArrayList
+
+# Function to manage runspaces
+function Manage-Runspaces {
+    for ($i = 0; $i -lt $runspaceJobs.Count; $i++) {
+        if ($runspaceJobs[$i].Status.IsCompleted) {
+            [void]$runspaceJobs[$i].Pipe.EndInvoke($runspaceJobs[$i].Status)
+            [void]$runspaceJobs[$i].Pipe.Dispose()
+            [void]$runspaceJobs.RemoveAt($i)
+            break
+        }
+    }
+}
+
+# Process each mailbox in batches
+foreach ($mailbox in $mailboxes) {
+    while ($runspaceJobs.Count -ge $maxConcurrentRunspaces) {
+        Manage-Runspaces
+        #Start-Sleep -Milliseconds 1
+    }
+    $smtp = $mailbox.primarysmtpaddress
+    $guid = $mailbox.Guid
+    $archiveState = $mailbox.archivestate
+    $powershell = [powershell]::Create().AddScript($scriptBlock).AddArgument($smtp).AddArgument($guid).AddArgument($archiveState).AddArgument($exportPath)
+    $powershell.RunspacePool = $runspacePool
+    $runspaceJob = [PSCustomObject]@{
+        Pipe = $powershell
+        Status = $powershell.BeginInvoke()
+    }
+    [void]$runspaceJobs.Add($runspaceJob)
+}
+
+# Wait for all runspaces to complete
+while ($runspaceJobs.Count -gt 0) {
+    Manage-Runspaces
+    #Start-Sleep -Milliseconds 1
+}
+
+# Close the runspace pool
+$runspacePool.Close()
+$runspacePool.Dispose()
+
+
+# Calculate and display script runtime. I chose this method over using measure-command because I am certian it has no affect on the loop.
+$stop = Get-Date
+$runtime = $stop - $start
+write-host "`nScript run time: $($runtime.TotalMinutes) minutes"
