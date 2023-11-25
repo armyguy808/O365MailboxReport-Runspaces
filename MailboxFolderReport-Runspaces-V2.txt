@@ -1,4 +1,4 @@
-﻿# Point of Contact
+# Point of Contact
 # Michael Fuller
 #www.linkedin.com/in/michael-fuller-5a3a5898
 
@@ -11,8 +11,8 @@ $exportPath = "C:\Users\$env:USERNAME\Documents\$($fileName)"
 # Change the result size from "unlimited" to any number to do a test run
 $resultSize="Unlimited"
 
-#Change the max runspaces to test performance.Rule of thumb is to match your max logical processors.
-#$maxConcurrentRunspaces = 8
+#Change the max runspaces to test performance.Rule of thumb is to match your max logical processors. However, this ran faster for me by doubling it.
+#$maxConcurrentRunspaces = 16
 
 # Define the maximum number of concurrent runspaces based on the current processor's logical core count
 $maxConcurrentRunspaces = (get-ciminstance -classname win32_processor | Measure-Object -Property NumberOfLogicalProcessors -sum).sum
@@ -30,10 +30,9 @@ $runspacePool.Open()
 $scriptBlock = {
     param ($smtp, $guid, $archiveState, $exportPath)
     # Process the current chunk and store the result
-    $result=($guid | Get-exoMailboxStatistics -properties LegacyDN)
-    $results2=if ($archivestate -notlike "None") {($guid | Get-exoMailboxStatistics -archive -properties LegacyDN)}
+    $result=($guid | Get-exoMailboxStatistics | Select-Object TotalItemSize,TotalDeletedItemSize)
+    $archive=if ($archivestate -notlike "None") {($guid | Get-exoMailboxStatistics select-object TotalItemSize}
     #write-host "Building report..."
-        $archive=($results2 | ? {$_.LegacyDN -like "*$($result.LegacyDN)*"})
         # object to store the result for this email
         $obj = [PSCustomObject]@{
                 "Email"                     = $smtp
@@ -41,7 +40,7 @@ $scriptBlock = {
                 "ArchiveSize (GB)"          = if ($archive.totalitemsize.value -ne $null) {[math]::round( ([decimal](($archive.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)} Else {"N/A"}
                 "RecoverableItemsSize (GB)" = [math]::round( ([decimal](($result.TotalDeletedItemSize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)
             }   
-#Export error handling. Faster and more reliable than try catch statement
+#Export error handling. Faster and more reliable than a try catch statement
 $error.clear()
 $obj | Export-Csv -Path $exportPath -NoTypeInformation -Append
 if ($error) {
