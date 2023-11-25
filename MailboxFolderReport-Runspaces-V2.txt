@@ -31,7 +31,7 @@ $scriptBlock = {
     param ($smtp, $guid, $archiveState, $exportPath)
     # Process the current chunk and store the result
     $result=($guid | Get-exoMailboxStatistics | Select-Object TotalItemSize,TotalDeletedItemSize)
-    $archive=if ($archivestate -notlike "None") {($guid | Get-exoMailboxStatistics select-object TotalItemSize}
+    $archive=if ($archivestate -notlike "None") {($guid | Get-exoMailboxStatistics | select-object TotalItemSize}
     #write-host "Building report..."
         # object to store the result for this email
         $obj = [PSCustomObject]@{
