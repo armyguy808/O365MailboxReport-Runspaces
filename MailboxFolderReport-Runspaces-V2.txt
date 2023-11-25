@@ -37,7 +37,7 @@ $scriptBlock = {
         $obj = [PSCustomObject]@{
                 "Email"                     = $smtp
                 "MailboxSize (GB)"          = [math]::round( ([decimal](($result.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)
-                "ArchiveSize (GB)"          = if ($archive.totalitemsize.value -ne $null) {[math]::round( ([decimal](($archive.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)} Else {"N/A"}
+                "ArchiveSize (GB)"          = if ($archivestate -notlike "None") {[math]::round( ([decimal](($archive.totalitemsize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)} Else {"N/A"}
                 "RecoverableItemsSize (GB)" = [math]::round( ([decimal](($result.TotalDeletedItemSize.value -replace "[0-9\.]+ [A-Z]* \(([0-9,]+) bytes\)","`$1") -replace ",","") / 1GB) ,2)
             }   
 #Export error handling. Faster and more reliable than a try catch statement
